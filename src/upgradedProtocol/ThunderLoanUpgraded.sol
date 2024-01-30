@@ -137,6 +137,8 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+    // @audit-info change name to poolFactoryAddress for consistency with `function __Oracle_init(address poolFactoryAddress)`
+    // @audit-info initialisers can be front run
     function initialize(address tswapAddress) external initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
@@ -272,6 +274,8 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
         return address(s_tokenToAssetToken[token]) != address(0);
     }
 
+
+    //@report-written in aderyn - not used internally, should be marked external
     function getAssetFromToken(IERC20 token) public view returns (AssetToken) {
         return s_tokenToAssetToken[token];
     }

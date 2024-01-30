@@ -107,7 +107,7 @@ forge coverage --report debug
 
 - Owner: The owner of the protocol who has the power to upgrade the implementation. 
 - Liquidity Provider: A user who deposits assets into the protocol to earn interest. 
-- User: A user who takes out flash loans from the protocol.
+- User: hA user who takes out flash loans from the protocol.
 
 ## Known Issues
 

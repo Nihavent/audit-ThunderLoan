@@ -73,6 +73,7 @@ import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils
 import { OracleUpgradeable } from "./OracleUpgradeable.sol";
 import { Address } from "@openzeppelin/contracts/utils/Address.sol";
 import { IFlashLoanReceiver } from "../interfaces/IFlashLoanReceiver.sol";
+// @audit-info should we be importing and implementing the IThunderLoan interface?
 
 contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, OracleUpgradeable {
     error ThunderLoan__NotAllowedToken(IERC20 token);
@@ -91,12 +92,14 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
-    mapping(IERC20 => AssetToken) public s_tokenToAssetToken;
+    mapping(IERC20 => AssetToken) public s_tokenToAssetToken; // maps underlying token to asset token
 
     // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price.
-    uint256 private s_feePrecision;
+    //@audit-info make this immutable or constant
+    uint256 private s_feePrecision; // q: why is this a storage variable if it's unchanged
     uint256 private s_flashLoanFee; // 0.3% ETH fee
 
+    //probably a mapping indicating if a token is currently in a flash loan
     mapping(IERC20 token => bool currentlyFlashLoaning) private s_currentlyFlashLoaning;
 
     /*//////////////////////////////////////////////////////////////
@@ -136,17 +139,22 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
 
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
+    //////////////////////////////////////////////////////////////*/\
+    // q what happens if we deploy the contract, and someone else initialises it?
+    // q they could pick a different tSwapAddress!
     function initialize(address tswapAddress) external initializer {
-        __Ownable_init(msg.sender);
-        __UUPSUpgradeable_init();
-        __Oracle_init(tswapAddress);
+        __Ownable_init(msg.sender);   //n msg.sender is original owner
+        __UUPSUpgradeable_init();     //n sets up storage for UUPS
+        __Oracle_init(tswapAddress); //n using TSwap as some king of oracle
+        //@audit-info magic numbers (Aderyn)
         s_feePrecision = 1e18;
         s_flashLoanFee = 3e15; // 0.3% ETH fee
     }
 
+    //@audit-info where is natspec
     function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) revertIfNotAllowedToken(token) {
         AssetToken assetToken = s_tokenToAssetToken[token];
+        // q does the exchange rate calculation take into consideration the impact of the deposit/redemption?
         uint256 exchangeRate = assetToken.getExchangeRate();
         uint256 mintAmount = (amount * assetToken.EXCHANGE_RATE_PRECISION()) / exchangeRate;
         emit Deposit(msg.sender, token, amount);
@@ -201,12 +209,17 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
 
         uint256 fee = getCalculatedFee(token, amount);
         // slither-disable-next-line reentrancy-vulnerabilities-2 reentrancy-vulnerabilities-3
+        // @follow up reentrancy later
         assetToken.updateExchangeRate(fee);
 
         emit FlashLoan(receiverAddress, token, amount, fee, params);
 
         s_currentlyFlashLoaning[token] = true;
+        //@follow up possible reentrancy later
         assetToken.transferUnderlyingTo(receiverAddress, amount);
+        //@follow up possible reentrancy later
+        //@audit-info messed up slither-disables
+        //@follow up, do we need the return value of receiverAddress.functionCall()?
         // slither-disable-next-line unused-return reentrancy-vulnerabilities-2
         receiverAddress.functionCall(
             abi.encodeCall(
@@ -236,11 +249,13 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         token.safeTransferFrom(msg.sender, address(assetToken), amount);
     }
 
+    //@audit-info needs natspec
     function setAllowedToken(IERC20 token, bool allowed) external onlyOwner returns (AssetToken) {
         if (allowed) {
             if (address(s_tokenToAssetToken[token]) != address(0)) {
-                revert ThunderLoan__AlreadyAllowed();
+                revert ThunderLoan__AlreadyAllowed(); //@audit-info maybe revert with token
             }
+            //@audit-info if a new ERC20 token doesn't have a name() or symbol() it cannot be added
             string memory name = string.concat("ThunderLoan ", IERC20Metadata(address(token)).name());
             string memory symbol = string.concat("tl", IERC20Metadata(address(token)).symbol());
             AssetToken assetToken = new AssetToken(address(this), token, name, symbol);
@@ -248,8 +263,9 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
         } else {
+            // q do we want to check if the token is currently in the mapping before deleting it?
             AssetToken assetToken = s_tokenToAssetToken[token];
-            delete s_tokenToAssetToken[token];
+            delete s_tokenToAssetToken[token]; //q does deleting a mapping work correctly?
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
         }
@@ -266,6 +282,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         if (newFee > s_feePrecision) {
             revert ThunderLoan__BadNewFee();
         }
+        // @audit low must emit an event when updating storage
         s_flashLoanFee = newFee;
     }
 

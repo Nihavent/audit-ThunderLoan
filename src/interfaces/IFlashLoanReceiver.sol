@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity 0.8.20;
 
+//@audit-info import only used in MockFlashLoanReceiver.sol, bad practice to import it here for a test
 import { IThunderLoan } from "./IThunderLoan.sol";
 
 /**
  * @dev Inspired by Aave:
  * https://github.com/aave/aave-v3-core/blob/master/contracts/flashloan/interfaces/IFlashLoanReceiver.sol
  */
+
+// n no natspec
+// q is the token the token which is being borrowed?
+// follow up how this works
 interface IFlashLoanReceiver {
     function executeOperation(
         address token,
