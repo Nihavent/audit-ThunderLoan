@@ -10,8 +10,7 @@ import { IThunderLoan } from "./IThunderLoan.sol";
  */
 
 // n no natspec
-// q is the token the token which is being borrowed?
-// follow up how this works
+// qa the token the token which is being borrowed? yes
 interface IFlashLoanReceiver {
     function executeOperation(
         address token,

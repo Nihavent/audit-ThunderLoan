@@ -23,7 +23,7 @@ contract AssetToken is ERC20 {
     // means 1 asset token is worth 2 underlying tokens
     // n underlying is like USDC
     // n assetToken is like shares in the thunderloan pool
-    // q what does this exchange rate do? How does it update over time as the fees increase the amount of udnerlying assets in the ThunderLoan?
+    // qa what does this exchange rate do? How does it update over time as the fees increase the amount of udnerlying assets in the ThunderLoan?
     uint256 private s_exchangeRate;
     uint256 public constant EXCHANGE_RATE_PRECISION = 1e18;
     uint256 private constant STARTING_EXCHANGE_RATE = 1e18;
@@ -56,7 +56,7 @@ contract AssetToken is ERC20 {
     constructor(
         address thunderLoan,
         IERC20 underlying, // n the token being deposited into the ThunderLoan
-        // q are the ERC20s stored in AssetToken.sol instead of ThunderLoan.sol?
+        // qa are the ERC20s stored in AssetToken.sol instead of ThunderLoan.sol? yes
         string memory assetName,
         string memory assetSymbol
     )
@@ -79,8 +79,9 @@ contract AssetToken is ERC20 {
     }
 
 
-    // q what happens if USDC blacklists the ThunderLoan contract?
-    // q what happens if USDC blacklists the AssetToken contract?
+    // qa what happens if USDC denylisted the ThunderLoan contract?
+    // qa what happens if USDC denylisted the AssetToken contract?
+    // @audit med if this happens the protocol would not be able to use USDC
     function transferUnderlyingTo(address to, uint256 amount) external onlyThunderLoan {
         i_underlying.safeTransfer(to, amount);
     }

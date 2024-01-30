@@ -94,10 +94,11 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     //////////////////////////////////////////////////////////////*/
     mapping(IERC20 => AssetToken) public s_tokenToAssetToken; // maps underlying token to asset token
 
+    //@audit-info natspec is wrong suggesting a fixed fee is taken
     // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price. 
-    // q do we mean a % fee?
+    // qa do we mean a % fee? 
     //@audit-info make this immutable or constant
-    uint256 private s_feePrecision; // q: why is this a storage variable if it's unchanged
+    uint256 private s_feePrecision; // qa why is this a storage variable if it's unchanged
     uint256 private s_flashLoanFee; // 0.3% ETH fee
 
     //probably a mapping indicating if a token is currently in a flash loan
@@ -141,14 +142,13 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    // q what happens if we deploy the contract, and someone else initialises it?
-    // q they could pick a different tSwapAddress!
+    // qa what happens if we deploy the contract, and someone else initialises it? they could pick a different tSwapAddress!
     // @audit-info change name to poolFactoryAddress for consistency with `function __Oracle_init(address poolFactoryAddress)`
     // @audit-info initialisers can be front run
     function initialize(address tswapAddress) external initializer {
         __Ownable_init(msg.sender);   //n msg.sender is original owner
         __UUPSUpgradeable_init();     //n sets up storage for UUPS
-        __Oracle_init(tswapAddress); //n using TSwap as some king of oracle
+        __Oracle_init(tswapAddress); //n using TSwap as some kind of oracle
         //@audit-info magic numbers (Aderyn)
         s_feePrecision = 1e18;
         s_flashLoanFee = 3e15; // 0.3% ETH fee
@@ -157,16 +157,25 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     //@audit-info where is natspec
     function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) revertIfNotAllowedToken(token) {
         AssetToken assetToken = s_tokenToAssetToken[token];
-        // q does the exchange rate calculation take into consideration the impact of the deposit/redemption?
+        // qa does the exchange rate calculation take into consideration the impact of the deposit/redemption? No, and it shouldn't because deposits/redemptions do not generate fees and therefore should not impact the exchange rate. assetTokens are minted and burned based on the current rate at the time of deposit/redemption
+        // @audit report-skipped edge case of initial depositer when pool is low or empty?
+        // qa does a second liquidity provider get the benefit of a higher exchange rate after fees have been calculated?
+        // qa no based on the following POC:
+            // 1. LP1 deposits 100 USDC for 100 asset tokens
+            // 2. users take flash loans which generate fees which update exchange rate
+            // 3. LP2 deposits 100 USDC but the exchangeRate is now 1.01, so they get 99.01 asset tokens
         uint256 exchangeRate = assetToken.getExchangeRate();
         // n lets say amount is 100 USDC and exhcange rate is 2e18, it's 100 e18 * 1e18 / 2e18 = 50 e18
         // n exchangeRate should never be 0 due to system invariant
         uint256 mintAmount = (amount * assetToken.EXCHANGE_RATE_PRECISION()) / exchangeRate;
         emit Deposit(msg.sender, token, amount);
         assetToken.mint(msg.sender, mintAmount);
+        
         // @audit follow up this seems weird to calculate fees and update exchange rate here
+        // @audit high we shouldn't be updating the exchange rate here!
         uint256 calculatedFee = getCalculatedFee(token, amount);
         assetToken.updateExchangeRate(calculatedFee);
+        
         // n when the LP deposits the money sits in the assetToken contract
         token.safeTransferFrom(msg.sender, address(assetToken), amount);
     }
@@ -219,6 +228,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             revert ThunderLoan__CallerIsNotContract();
         }
 
+        //n his fee is returned in units of weth, not in token
         uint256 fee = getCalculatedFee(token, amount);
         // slither-disable-next-line reentrancy-vulnerabilities-2 reentrancy-vulnerabilities-3
         // @follow up reentrancy later
@@ -248,6 +258,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         // q what if someone deposits into this balance whilst a flash loan is active, then the flash loan may never get paid back?
         // n ie, maybe we need to check that the funds loaned to receiverAddress are paid back by receiverAddress
         uint256 endingBalance = token.balanceOf(address(assetToken));
+        // n fee added to token balance but fee is in weth
         if (endingBalance < startingBalance + fee) {
             revert ThunderLoan__NotPaidBack(startingBalance + fee, endingBalance);
         }
@@ -255,6 +266,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     }
 
     // n this is the function that the flashloan receiver calls to repay the flashloan
+    // @audit low you can't use repay to repay a flash loan inside another flash loan - s_currentlyFlashLoaning[token] will be set to false after the first flash loan is paid back, so cannot enter the repay function
     function repay(IERC20 token, uint256 amount) public {
         if (!s_currentlyFlashLoaning[token]) {
             revert ThunderLoan__NotCurrentlyFlashLoaning();
@@ -277,21 +289,21 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
         } else {
-            //q what happens if the token we're trying to disallow isn't currently approved?
+            // q what happens if the token we're trying to disallow isn't currently approved?
             // q do we want to check if the token is currently in the mapping before deleting it?
             AssetToken assetToken = s_tokenToAssetToken[token];
-            delete s_tokenToAssetToken[token]; //q does deleting a mapping work correctly?
+            delete s_tokenToAssetToken[token]; //qa does deleting a mapping work correctly? Yes
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
         }
     }
 
     // @audit-info needs natspec
-    // q why are we calculating the fees of flash loans in deposit()?
     // @audit follow up this seems weird
     // @param token: the token being borrowed
     // @param amount: the amount of the token being borrowed
     function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
+        // @audit med/high prices are wrong due to being in weth
         //slither-disable-next-line divide-before-multiply
         uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
         //slither-disable-next-line divide-before-multiply
