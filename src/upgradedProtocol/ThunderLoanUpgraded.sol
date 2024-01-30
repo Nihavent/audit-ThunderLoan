@@ -137,8 +137,6 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    // @audit-info change name to poolFactoryAddress for consistency with `function __Oracle_init(address poolFactoryAddress)`
-    // @audit-info initialisers can be front run
     function initialize(address tswapAddress) external initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
@@ -146,7 +144,14 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
         s_flashLoanFee = 3e15; // 0.3% ETH fee
     }
 
-    function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) revertIfNotAllowedToken(token) {
+    function deposit(
+        IERC20 token, 
+        uint256 amount
+    ) 
+        external 
+        revertIfZero(amount) 
+        revertIfNotAllowedToken(token) 
+    {
         AssetToken assetToken = s_tokenToAssetToken[token];
         uint256 exchangeRate = assetToken.getExchangeRate();
         uint256 mintAmount = (amount * assetToken.EXCHANGE_RATE_PRECISION()) / exchangeRate;
@@ -161,37 +166,39 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
     /// @param token The token they want to withdraw from
     /// @param amountOfAssetToken The amount of the underlying they want to withdraw
     function redeem(
-        IERC20 token,
+        IERC20 token, 
         uint256 amountOfAssetToken
     )
         external
         revertIfZero(amountOfAssetToken)
         revertIfNotAllowedToken(token)
     {
-        AssetToken assetToken = s_tokenToAssetToken[token];
+        AssetToken assetToken = s_tokenToAssetToken[token]; 
         uint256 exchangeRate = assetToken.getExchangeRate();
         if (amountOfAssetToken == type(uint256).max) {
             amountOfAssetToken = assetToken.balanceOf(msg.sender);
         }
+        
         uint256 amountUnderlying = (amountOfAssetToken * exchangeRate) / assetToken.EXCHANGE_RATE_PRECISION();
         emit Redeemed(msg.sender, token, amountOfAssetToken, amountUnderlying);
         assetToken.burn(msg.sender, amountOfAssetToken);
         assetToken.transferUnderlyingTo(msg.sender, amountUnderlying);
     }
 
+    
     function flashloan(
-        address receiverAddress,
-        IERC20 token,
-        uint256 amount,
-        bytes calldata params
+        address receiverAddress, 
+        IERC20 token, 
+        uint256 amount, 
+        bytes calldata params 
     )
         external
         revertIfZero(amount)
         revertIfNotAllowedToken(token)
     {
-        AssetToken assetToken = s_tokenToAssetToken[token];
+        AssetToken assetToken = s_tokenToAssetToken[token]; 
         uint256 startingBalance = IERC20(token).balanceOf(address(assetToken));
-
+        
         if (amount > startingBalance) {
             revert ThunderLoan__NotEnoughTokenBalance(startingBalance, amount);
         }
@@ -263,8 +270,9 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
         fee = (valueOfBorrowedToken * s_flashLoanFee) / FEE_PRECISION;
     }
 
+
     function updateFlashLoanFee(uint256 newFee) external onlyOwner {
-        if (newFee > FEE_PRECISION) {
+        if (newFee > FEE_PRECISION) { 
             revert ThunderLoan__BadNewFee();
         }
         s_flashLoanFee = newFee;
@@ -275,7 +283,6 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
     }
 
 
-    //@report-written in aderyn - not used internally, should be marked external
     function getAssetFromToken(IERC20 token) public view returns (AssetToken) {
         return s_tokenToAssetToken[token];
     }

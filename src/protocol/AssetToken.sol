@@ -86,7 +86,7 @@ contract AssetToken is ERC20 {
     }
 
     // n probably responsible for updating the exchange rate between assetTokens and underlying asset
-    // n exchange rate is only changed when a fee is taken
+    // n exchange rate changes when a fee is received because the ratio of underlying to assetTokens changes
     function updateExchangeRate(uint256 fee) external onlyThunderLoan {
         // 1. Get the current exchange rate
         // 2. How big the fee is should be divided by the total supply

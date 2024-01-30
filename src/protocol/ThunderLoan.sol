@@ -94,7 +94,8 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     //////////////////////////////////////////////////////////////*/
     mapping(IERC20 => AssetToken) public s_tokenToAssetToken; // maps underlying token to asset token
 
-    // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price.
+    // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price. 
+    // q do we mean a % fee?
     //@audit-info make this immutable or constant
     uint256 private s_feePrecision; // q: why is this a storage variable if it's unchanged
     uint256 private s_flashLoanFee; // 0.3% ETH fee
@@ -139,9 +140,11 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
 
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////////*/\
+    //////////////////////////////////////////////////////////////*/
     // q what happens if we deploy the contract, and someone else initialises it?
     // q they could pick a different tSwapAddress!
+    // @audit-info change name to poolFactoryAddress for consistency with `function __Oracle_init(address poolFactoryAddress)`
+    // @audit-info initialisers can be front run
     function initialize(address tswapAddress) external initializer {
         __Ownable_init(msg.sender);   //n msg.sender is original owner
         __UUPSUpgradeable_init();     //n sets up storage for UUPS
@@ -156,11 +159,15 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         AssetToken assetToken = s_tokenToAssetToken[token];
         // q does the exchange rate calculation take into consideration the impact of the deposit/redemption?
         uint256 exchangeRate = assetToken.getExchangeRate();
+        // n lets say amount is 100 USDC and exhcange rate is 2e18, it's 100 e18 * 1e18 / 2e18 = 50 e18
+        // n exchangeRate should never be 0 due to system invariant
         uint256 mintAmount = (amount * assetToken.EXCHANGE_RATE_PRECISION()) / exchangeRate;
         emit Deposit(msg.sender, token, amount);
         assetToken.mint(msg.sender, mintAmount);
+        // @audit follow up this seems weird to calculate fees and update exchange rate here
         uint256 calculatedFee = getCalculatedFee(token, amount);
         assetToken.updateExchangeRate(calculatedFee);
+        // n when the LP deposits the money sits in the assetToken contract
         token.safeTransferFrom(msg.sender, address(assetToken), amount);
     }
 
@@ -168,41 +175,46 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     /// @param token The token they want to withdraw from
     /// @param amountOfAssetToken The amount of the underlying they want to withdraw
     function redeem(
-        IERC20 token,
+        IERC20 token, //n underlying
         uint256 amountOfAssetToken
     )
         external
         revertIfZero(amountOfAssetToken)
         revertIfNotAllowedToken(token)
     {
-        AssetToken assetToken = s_tokenToAssetToken[token];
+        AssetToken assetToken = s_tokenToAssetToken[token]; // n asset token is retrived based on underlying asset they are redeeming
         uint256 exchangeRate = assetToken.getExchangeRate();
         if (amountOfAssetToken == type(uint256).max) {
             amountOfAssetToken = assetToken.balanceOf(msg.sender);
         }
+        // n if we have 50 asset tokens and exchange rate is 2e18, we have 50 * 2e18 / 1e18 = 100 underlying tokens
         uint256 amountUnderlying = (amountOfAssetToken * exchangeRate) / assetToken.EXCHANGE_RATE_PRECISION();
         emit Redeemed(msg.sender, token, amountOfAssetToken, amountUnderlying);
         assetToken.burn(msg.sender, amountOfAssetToken);
         assetToken.transferUnderlyingTo(msg.sender, amountUnderlying);
     }
 
+    //@audit-info natspec
     function flashloan(
-        address receiverAddress,
-        IERC20 token,
-        uint256 amount,
-        bytes calldata params
+        address receiverAddress, // n the address to get flashloan tokens?
+        IERC20 token, // n the token to borrow
+        uint256 amount, // n the amount of tokens to borrow
+        bytes calldata params // n the parameters to call the receiverAddress
     )
         external
         revertIfZero(amount)
         revertIfNotAllowedToken(token)
     {
-        AssetToken assetToken = s_tokenToAssetToken[token];
+        AssetToken assetToken = s_tokenToAssetToken[token]; // n this contract holds the underlying tokens to loan
+        //q what if two flash loans are taken at the same time?
         uint256 startingBalance = IERC20(token).balanceOf(address(assetToken));
 
         if (amount > startingBalance) {
             revert ThunderLoan__NotEnoughTokenBalance(startingBalance, amount);
         }
 
+        // q what happens if receiverAddress is not a IFlashLoanReceiver?
+        // n check this works, it's supposed to check if the caller is a contract
         if (receiverAddress.code.length == 0) {
             revert ThunderLoan__CallerIsNotContract();
         }
@@ -233,7 +245,8 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
                 )
             )
         );
-
+        // q what if someone deposits into this balance whilst a flash loan is active, then the flash loan may never get paid back?
+        // n ie, maybe we need to check that the funds loaned to receiverAddress are paid back by receiverAddress
         uint256 endingBalance = token.balanceOf(address(assetToken));
         if (endingBalance < startingBalance + fee) {
             revert ThunderLoan__NotPaidBack(startingBalance + fee, endingBalance);
@@ -241,6 +254,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         s_currentlyFlashLoaning[token] = false;
     }
 
+    // n this is the function that the flashloan receiver calls to repay the flashloan
     function repay(IERC20 token, uint256 amount) public {
         if (!s_currentlyFlashLoaning[token]) {
             revert ThunderLoan__NotCurrentlyFlashLoaning();
@@ -263,6 +277,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
         } else {
+            //q what happens if the token we're trying to disallow isn't currently approved?
             // q do we want to check if the token is currently in the mapping before deleting it?
             AssetToken assetToken = s_tokenToAssetToken[token];
             delete s_tokenToAssetToken[token]; //q does deleting a mapping work correctly?
@@ -271,15 +286,23 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         }
     }
 
+    // @audit-info needs natspec
+    // q why are we calculating the fees of flash loans in deposit()?
+    // @audit follow up this seems weird
+    // @param token: the token being borrowed
+    // @param amount: the amount of the token being borrowed
     function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
         //slither-disable-next-line divide-before-multiply
         uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
         //slither-disable-next-line divide-before-multiply
+        // q why do we need to convert the value of the borrowed item in weth, to calculate the value of the fee? Can't we just calculate the fee based on the `amount` of the borrowed token?
         fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
     }
 
+    //@audit-info natspec.
+    // q could we decrease some decentralisation risk by setting a hard limit on the max s_flashLoanFee that can be set? I guess the whole contract could just be upgraded anyway..
     function updateFlashLoanFee(uint256 newFee) external onlyOwner {
-        if (newFee > s_feePrecision) {
+        if (newFee > s_feePrecision) { // n if the new fee is > 1e18, revert because 1e18 is 100%
             revert ThunderLoan__BadNewFee();
         }
         // @audit low must emit an event when updating storage
@@ -290,6 +313,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         return address(s_tokenToAssetToken[token]) != address(0);
     }
 
+    //@report-written in aderyn - not used internally, should be marked external
     function getAssetFromToken(IERC20 token) public view returns (AssetToken) {
         return s_tokenToAssetToken[token];
     }
